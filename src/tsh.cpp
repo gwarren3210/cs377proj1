@@ -13,7 +13,7 @@ using namespace std;
  * when a command needs more input (e.g. a multi-line command). PS3 is not very
  * commonly used
  */
-void display_prompt() { cout << "$ "; }
+void display_prompt() {cout << "$ ";}
 
 /**
  * @brief Cleans up allocated resources to prevent memory leaks.
@@ -74,7 +74,13 @@ void run() {
   list<Process *> process_list;
   char *input_line;
   bool is_quit = false;
-
+  while (!is_quit){
+    display_prompt();
+    char* input = read_input();
+    parse_input(input, process_list);
+    is_quit = run_commands(process_list);
+    cleanup(process_list, input_line);
+  }
 }
 
 /**
@@ -98,9 +104,10 @@ void run() {
 char *read_input() {
   char *input = NULL;
   char tempbuf[MAX_LINE];
-  size_t inputlen = 0, templen = 0;
-
-
+  //size_t inputlen = 0, templen = 0;
+  std::cout << "Enter a line: ";
+  std::cin.getline(tempbuf, MAX_LINE);
+  input = strdup(tempbuf);
   return input;
 }
 
@@ -139,9 +146,33 @@ char *read_input() {
 void parse_input(char *cmd, list<Process *> &process_list) {
   const char *delimiters = "|;";
   int pipe_in_val = 0;
-  char *cmd_copy = nullptr;
-  Process *currProcess = nullptr;
+  char *cmd_copy = strdup(cmd);
+  //Process *currProcess = nullptr;
+  char* token = strtok(cmd_copy, delimiters);
+  char* next;
+  while(token != NULL){
+    // check next for |
+    next = strtok(NULL, delimiters);
+    int pipe_out_val = (*strtok(NULL, "") == '|' && next) ? 1 : 0;
+    
+    // create new process
+    Process* newProc = new Process(token, pipe_in_val, pipe_out_val); 
 
+    // add to list
+    process_list.push_back(newProc);
+
+    // iterate to next token
+    token = next;
+    pipe_in_val = pipe_out_val;
+  }
+
+  // free cmd_cpy
+  free(cmd_copy);
+
+  //split_string() method is called for each Process in the * process_list.
+  for (Process* p : process_list){
+    p->split_string();
+  }
 }
 
 /**
@@ -158,8 +189,12 @@ void parse_input(char *cmd, list<Process *> &process_list) {
  *   - false otherwise.
  */
 bool isQuit(Process *p) {
-
-  return false;
+  if (!p || !(p->cmd)){return false;}
+  char* cpy_cmd = strdup((p->cmd));
+  char* cmd = strtok(p->cmd, "");
+  bool isQuit = strcmp(cmd, "quit") == 0;
+  free(cpy_cmd);
+  return isQuit;
 }
 
 /**
@@ -211,12 +246,62 @@ bool isQuit(Process *p) {
  */
 bool run_commands(list<Process *> &command_list) {
   bool is_quit = false;
-  int i = 0;
-  int j = 0;
-  int size = command_list.size();
-  pid_t pids[size];
+  //int i = 0;
+  //int j = 0;
+  //int size = command_list.size();
+  //pid_t pids[size];
   Process *prev = nullptr;
+  int prev_fd[2];
+  for (Process* p : command_list){
+    // check quit
+    if (isQuit(p)){
+      is_quit = true;
+      break;
+    }
 
+    // check if new pipe is needed
+    // fork
+    int pid = fork();
+    if (pid == -1){
+      exit(1);
+    }
+
+    int fd[2];
+    if(pipe(fd) == -1) exit(1);
+      // if child
+    if (pid == 0) {
+        // set up pipes for input and output
+        // prev pipes out
+        if (p->pipe_in) dup2(prev_fd[1], STDIN_FILENO);
+
+        if (prev) {
+          //if (prev->pipe_out) dup2(prev_fd[0], STDOUT_FILENO);
+          close(prev_fd[0]);
+          close(prev_fd[1]);
+        }
+        // if it pipes out
+        if(p->pipe_out) dup2(fd[1], STDOUT_FILENO);
+        close(fd[0]);
+        close(fd[1]);
+
+        // execute the command using execvp
+        execvp(p->cmdTokens[0], p->cmdTokens);
+        // handle errors if the command is invalid.
+        exit(1);
+    } else if (pid > 0){
+      // if parent
+        // close unused pipes
+        if (prev) {
+          close(prev_fd[0]);
+          close(prev_fd[1]);
+        }
+
+        // wait for child processes to finish if necessary,
+        wait(&pid);
+        // continue to the next command.
+    }
+    prev = p;
+  }
   return is_quit;
 }
 
